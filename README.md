@@ -92,3 +92,14 @@ configs/         tracker settings
 src/             scripts
 outputs/         result videos, track files, scores (not committed)
 ```
+
+## Recording clips
+
+Clips are recorded with Xbox Game Bar (1080p, 60 fps, high quality) and are not committed.
+Game Bar records with a variable frame rate, so every clip is converted to a constant 60 fps when it is cut:
+
+```powershell
+ffmpeg -ss 00:01:00 -i data\clips\mw2_raw.mp4 -t 45 -r 60 -fps_mode cfr -c:v libx264 -crf 18 -an data\clips\clip01.mp4
+```
+
+A constant frame rate keeps frame numbers consistent between ground truth, tracker output and evaluation.
