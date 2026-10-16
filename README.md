@@ -4,7 +4,7 @@ Multi-object tracking on gameplay recordings: detect characters in every frame, 
 
 Follow-up to [realtime-depth-optimization](https://github.com/karadjordjepetrovic/realtime-depth-optimization) and game-text-recognition (HUD mask).
 
-> **Status:** work in progress. Baseline, clean timing and reference comparison done; next step is TensorRT.
+> **Status:** work in progress. TensorRT FP16 doubles end-to-end speed (47 → 93 FPS) with no measurable accuracy loss. Next: profiling and reducing the CPU overhead around the model.
 
 <!-- Demo GIF goes here: reference vs optimized tracker, side by side. -->
 
@@ -29,7 +29,8 @@ Test clip: 41 s of Call of Duty: Modern Warfare 2 campaign gameplay, 1080p, 2,45
 | nano | YOLO11n | 640 | 48.3 | 0.792 | 0.397 | 0.529 | 0.425 | 64 |
 | nano_1280 | YOLO11n | 1280 | 50.0 | 0.862 | 0.593 | 0.703 | 0.625 | 54 |
 | small | YOLO11s | 640 | 55.5 | 0.865 | 0.603 | 0.711 | 0.599 | 69 |
-| **medium** | **YOLO11m** | **640** | **47.3** | **0.936** | **0.716** | **0.811** | **0.734** | **66** |
+| medium | YOLO11m | 640 | 47.3 | 0.936 | 0.716 | 0.811 | 0.734 | 66 |
+| **medium_trt_fp16** | **YOLO11m, TensorRT FP16** | **640** | **93.0** | **0.937** | **0.705** | **0.804** | **0.737** | **56** |
 
 ### Per-stage timing (ms per frame)
 
@@ -40,9 +41,12 @@ Test clip: 41 s of Call of Duty: Modern Warfare 2 campaign gameplay, 1080p, 2,45
 | nano_1280 | 2.99 | 3.59 | 10.36 | 1.60 | 1.46 | 19.99 |
 | small | 2.97 | 1.05 | 10.86 | 1.64 | 1.50 | 18.02 |
 | medium | 2.99 | 1.09 | 13.85 | 1.67 | 1.54 | 21.14 |
+| medium_trt_fp16 | 2.55 | 1.31 | 3.68 | 1.72 | 1.49 | 10.75 |
 
 ### Observations
 
+- **TensorRT FP16 makes the network 3.8× faster (13.85 → 3.68 ms) and the whole pipeline 2× faster (47 → 93 FPS),** with agreement unchanged (F1 0.811 → 0.804, IDF1 0.734 → 0.737, within run-to-run noise). TensorRT fuses layers, runs in 16-bit on the 3070's Tensor Cores, and picks the fastest kernels for this GPU when the engine is built.
+- **After TensorRT, the network is only a third of the frame time.** Decode, pre/postprocessing and the tracker take ~7 ms, mostly on the CPU, which caps the pipeline at ~140 FPS even with zero-cost inference (Amdahl's law). Further speed-ups have to come from that overhead, not from a faster model.
 - **Small models are not GPU-bound.** Going from YOLO11n to YOLO11m roughly triples the network size but adds only a few milliseconds: inference stays at 10–14 ms, and decode, pre/postprocessing and the tracker add another ~7 ms on the CPU regardless of model. Picking a smaller model barely buys speed; the overhead around the model does.
 - **Input resolution matters for distant characters.** YOLO11n gains 0.17 F1 going from 640 to 1280 px input, so many of the misses are small characters that disappear when the 1080p frame is shrunk.
 - **YOLO11m at 640 is the configuration to optimize:** the best agreement with the reference (F1 0.81) at nearly the speed of the smallest model.
@@ -51,11 +55,18 @@ Test clip: 41 s of Call of Duty: Modern Warfare 2 campaign gameplay, 1080p, 2,45
 
 ## Next steps
 
-1. TensorRT FP16 and INT8 for YOLO11m, scored against the reference
-2. Nsight Systems profiling of the CPU overhead around the model
-3. GPU video decode (NVDEC) and GPU preprocessing
+1. Nsight Systems profiling of the ~7 ms of overhead around the model
+2. GPU video decode (NVDEC) and GPU preprocessing
+3. TensorRT INT8 with calibration on game frames
 4. Detector-skip experiment: FPS vs agreement curve
-5. Optional: HUD masking and camera motion compensation to reduce ID switches
+5. Repeated runs to report timing variance
+6. Optional: HUD masking and camera motion compensation to reduce ID switches
+
+## Limitations
+
+- One 41-second clip; results may differ on other games and scenes.
+- Accuracy is agreement with a reference run, not with hand-labelled ground truth.
+- Timings are single runs and vary by ±1–2 ms between runs.
 
 ## Setup
 
@@ -97,6 +108,13 @@ python src/track.py data/clips/clip01.mp4 --model yolo11x.pt --imgsz 1280 --tag 
 
 # a faster configuration
 python src/track.py data/clips/clip01.mp4 --model yolo11m.pt --tag medium
+```
+
+Build a TensorRT FP16 engine (takes a few minutes; installs TensorRT on first use, or `pip install tensorrt-cu12`) and track with it:
+
+```powershell
+python -c "from ultralytics import YOLO; YOLO('yolo11m.pt').export(format='engine', half=True, imgsz=640)"
+python src/track.py data/clips/clip01.mp4 --model yolo11m.engine --tag medium_trt_fp16
 ```
 
 Compare a run with the reference (also appends a row to `outputs/<clip>/results.csv`):
