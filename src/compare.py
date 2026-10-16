@@ -14,6 +14,7 @@ run's timing file, so you can build the README table from it.
 
 Example:
   python src/compare.py outputs/clip01/reference.txt outputs/clip01/nano.txt
+  python src/compare.py results/clip01/reference.txt results/clip01/trt_threaded.txt --no-csv
 """
 import csv
 import json
@@ -106,9 +107,11 @@ def compare(ref, run):
 
 
 if __name__ == '__main__':
-    if len(sys.argv) != 3:
-        raise SystemExit('Usage: python src/compare.py <reference.txt> <run.txt>')
-    ref_path, run_path = Path(sys.argv[1]), Path(sys.argv[2])
+    argv = [a for a in sys.argv[1:] if a != '--no-csv']
+    save_csv = '--no-csv' not in sys.argv[1:]
+    if len(argv) != 2:
+        raise SystemExit('Usage: python src/compare.py <reference.txt> <run.txt> [--no-csv]')
+    ref_path, run_path = Path(argv[0]), Path(argv[1])
     m = compare(load_tracks(ref_path), load_tracks(run_path))
 
     timing_path = run_path.with_name(run_path.stem + '_timing.json')
@@ -124,6 +127,8 @@ if __name__ == '__main__':
     if fps != '':
         print(f'  FPS          {fps}')
 
+    if not save_csv:
+        raise SystemExit(0)
     results = run_path.parent / 'results.csv'
     new_file = not results.exists()
     with open(results, 'a', newline='') as f:
